@@ -1,4 +1,4 @@
-# PhotoCurator - Architecture & Design Details
+# PhotoCurator v2 - Architecture & Design Details
 
 ## System Architecture Overview
 
@@ -8,13 +8,13 @@
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                   │
 │  ┌──────────────────┐      ┌──────────────────┐                  │
-│  │   Ingest App     │      │   Web Browsers   │                  │
-│  │  (macOS SwiftUI) │      │   (React + TS)   │                  │
+│  │   Ingest CLI     │      │   Web Browsers   │                  │
+│  │  (macOS, manual) │      │  (Next.js + TS)  │                  │
 │  │                  │      │                  │                  │
-│  │ • Dir selector   │      │ • Session dash   │                  │
-│  │ • Upload queue   │      │ • Cull interface │                  │
-│  │ • Progress UI    │      │ • Browse/filter  │                  │
-│  │ • Metadata cache │      │ • Export         │                  │
+│  │ • File selector  │      │ • Session dash   │                  │
+│  │ • Batch upload   │      │ • Cull interface │                  │
+│  │ • Progress       │      │ • Browse/filter  │                  │
+│  │ • Status polling │      │ • Export         │                  │
 │  └────────┬─────────┘      └────────┬─────────┘                  │
 │           │                         │                            │
 │           │  HTTP/HTTPS             │                            │
@@ -22,41 +22,48 @@
 │           │                        │                             │
 │           v                        v                             │
 │  ┌────────────────────────────────────────┐                      │
-│  │         CURATOR SERVER                 │                      │
-│  │    (FastAPI + Python)                  │                      │
+│  │         CURATOR SERVER (Go)            │                      │
+│  │    REST API + Image Processing         │                      │
 │  ├────────────────────────────────────────┤                      │
 │  │                                        │                      │
 │  │  API Endpoints:                        │                      │
-│  │  ├─ POST /api/ingest/upload            │                      │
-│  │  ├─ GET  /api/ingest/status/{id}       │                      │
-│  │  ├─ GET  /api/sessions                 │                      │
-│  │  ├─ GET  /api/sessions/{id}/images     │                      │
-│  │  ├─ PATCH /api/images/{id}/cull        │                      │
-│  │  └─ GET  /api/export/{session_id}      │                      │
+│  │  ├─ POST   /api/sessions               │                      │
+│  │  ├─ POST   /api/sessions/{id}/upload   │                      │
+│  │  ├─ GET    /api/sessions               │                      │
+│  │  ├─ GET    /api/sessions/{id}          │                      │
+│  │  ├─ GET    /api/sessions/{id}/images   │                      │
+│  │  ├─ PATCH  /api/images/{id}/cull       │                      │
+│  │  └─ GET    /api/export/{session_id}    │                      │
 │  │                                        │                      │
 │  └────────┬─────────────┬────────┬────────┘                      │
 │           │             │        │                               │
-│    ┌──────v──┐   ┌──────v───┐   └──────────────┐                 │
-│    │ Storage │   │  Tasks   │                  │                 │
-│    │ Service │   │  Queue   │          ┌───────v─────────┐       │
-│    ├─────────┤   ├──────────┤          │ Image Processors│       │
-│    │Filesystem   │ Celery   │          ├────────────────┤       │
-│    │data/        │ Redis    │          │                │       │
-│    │images/      │          │          │ • Sharpness    │       │
-│    │sessions/    │ • Analyze│          │ • YOLO v8      │       │
-│    │thumbs/      │ • Export │          │ • Thumbnails   │       │
-│    └─────────┘   └──────────┘          │ • Metadata     │       │
-│       │                                 └────────────────┘       │
-│       └─────────────────────────────┐                            │
-│                                     │                            │
-│                          ┌──────────v─────────┐                  │
-│                          │  PostgreSQL DB     │                  │
-│                          ├────────────────────┤                  │
-│                          │ • Sessions         │                  │
-│                          │ • Images           │                  │
-│                          │ • Analysis results │                  │
-│                          │ • Curation state   │                  │
-│                          └────────────────────┘                  │
+│    ┌──────v──┐   ┌──────v───┐   └────────────┐                  │
+│    │ Storage │   │  Analysis │               │                  │
+│    │ Service │   │  Queue    │      ┌────────v──────────┐       │
+│    ├─────────┤   ├───────────┤      │ Image Processors  │       │
+│    │Filesystem   │ Task pool │      ├───────────────────┤       │
+│    │data/        │ (goroutines)     │                   │       │
+│    │images/      │ • Analyze │      │ • Sharpness       │       │
+│    │sessions/    │ • Export  │      │   (Laplacian)     │       │
+│    │thumbs/      │           │      │ • Taxonomies      │       │
+│    └─────────┘   └───────────┘      │   (hierarchical)  │       │
+│       │                             │ • Metadata embed  │       │
+│       └──────────────────────┐      │ • Thumbnails      │       │
+│                              │      │                   │       │
+│                   ┌──────────v──────────┐                │       │
+│                   │     SQLite DB       │ (or PostgreSQL)│       │
+│                   ├─────────────────────┤                │       │
+│                   │ • Sessions          │                │       │
+│                   │ • Images            │                │       │
+│                   │ • Analysis results  │                │       │
+│                   │ • Curation state    │                │       │
+│                   │ • Taxonomies        │                │       │
+│                   └─────────────────────┘                │       │
+│                                                           │       │
+│                          ┌────────────────────────────────┘       │
+│                          └────────────────────────────────┐       │
+│                                                          │       │
+│                   (REST endpoints ←────────────────────┘       │
 │                                                                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -65,39 +72,44 @@
 
 ## Data Flow Diagrams
 
-### Flow 1: Photo Ingestion
+### Flow 1: Photo Ingestion (CLI)
 
 ```
-User opens Ingest App
-         │
-         ├─ [Select Source Directory]
-         │
-         ├─ [Scan for Images]
+User runs: photo-curator ingest --source ~/Photos
+
+         ├─ [Select/scan source directory]
          │  └─ Find JPEG, RAW, PNG, HEIC, TIFF
-         │     └─ Display count & size
+         │     └─ Display file count & total size
          │
-         ├─ [Start Upload]
-         │  ├─ Read metadata from each file
-         │  ├─ Upload 4-8 in parallel (chunked if large)
-         │  │  └─ POST /api/ingest/upload
-         │  │     └─ Server receives, stores locally, enqueues analysis
+         ├─ [Create session on server]
+         │  ├─ POST /api/sessions
+         │  │  { name: "...", description: "..." }
+         │  └─ Receive session_id
+         │
+         ├─ [Batch upload 1-8 files in parallel]
+         │  ├─ POST /api/sessions/{session_id}/upload
+         │  │  multipart: [image files + metadata]
          │  │
-         │  └─ Poll GET /api/ingest/status/{session_id}
-         │     ├─ Show progress: 45/247
-         │     ├─ Show speed: 2.3 MB/s
-         │     └─ Show ETA: 20 minutes
+         │  ├─ Server receives, stores locally
+         │  ├─ Enqueues analysis tasks
+         │  └─ Returns: [image IDs, status]
          │
-         └─ [Ingest Complete]
-            ├─ Display session ID
-            ├─ Show QR code to web UI
-            └─ Offer: [Open Web UI] [Start New] [Quit]
+         ├─ [Poll for analysis progress]
+         │  ├─ GET /api/sessions/{session_id}
+         │  │  └─ totalImages: 247, analyzedImages: 156
+         │  │
+         │  └─ Display progress bar & ETA
+         │
+         └─ [Ingest complete]
+            └─ Display session ID
+            └─ Show: [Open Web UI] [New Session] [Quit]
 ```
 
 ### Flow 2: Server-Side Analysis
 
 ```
 Server receives image batch
-         │
+
          ├─[1] Store Image
          │    └─ Write to data/images/{session_id}/
          │
@@ -106,12 +118,13 @@ Server receives image batch
          │    ├─ Read creation timestamp
          │    └─ Store in .json sidecar
          │
-         ├─[3] Enqueue Analysis Tasks (Celery)
-         │    ├─ Task: sharpness_scorer
-         │    ├─ Task: subject_detector
-         │    └─ Task: generate_thumbnails
+         ├─[3] Enqueue Analysis Tasks (async goroutines)
+         │    ├─ Task: compute_sharpness
+         │    ├─ Task: categorize_subjects
+         │    ├─ Task: generate_thumbnails
+         │    └─ Task: embed_metadata
          │
-         ├─[4] Async Processing (worker pool)
+         ├─[4] Async Processing
          │    │
          │    ├─ Sharpness Scorer
          │    │  ├─ Load image
@@ -120,59 +133,60 @@ Server receives image batch
          │    │  └─ Normalize to 0-100 scale
          │    │     └─ Result: score 87, passing=true
          │    │
-         │    ├─ Subject Detector (YOLO v8)
-         │    │  ├─ Load model (preloaded in GPU)
-         │    │  ├─ Run inference
-         │    │  └─ Extract detections
-         │    │     └─ Result: [person (0.98), flowers (0.76)]
+         │    ├─ Subject Categorizer
+         │    │  ├─ Load image (or use cached features)
+         │    │  ├─ Run hierarchical taxonomy classifier
+         │    │  │  └─ Mammal → Dog → Labrador (confidence 0.96)
+         │    │  └─ Extract multi-level categories
+         │    │     └─ Result: [Mammal/0.99, Dog/0.98, Labrador/0.96]
          │    │
-         │    └─ Thumbnail Generator
-         │       ├─ Generate 150px version
-         │       ├─ Generate 400px version
-         │       └─ Store in data/thumbnails/
+         │    ├─ Thumbnail Generator
+         │    │  ├─ Generate 150px version
+         │    │  ├─ Generate 400px version
+         │    │  └─ Store in data/thumbnails/
+         │    │
+         │    └─ Metadata Embedder
+         │       ├─ Write subjects to XMP tags
+         │       ├─ Write sharpness metadata
+         │       └─ Write taxonomy hierarchy
          │
-         ├─[5] Embed Labels
-         │    ├─ Write subjects to EXIF XMP tags
-         │    └─ Write sharpness metadata
-         │
-         ├─[6] Update Database
-         │    └─ INSERT INTO images (...) VALUES (...)
+         ├─[5] Update Database
+         │    └─ INSERT/UPDATE images, analysis results
          │       └─ Queryable metadata for UI
          │
          └─ [Analysis Complete]
-            └─ WebSocket notify client of progress
+            └─ WebSocket notify CLI/UI of progress
 ```
 
 ### Flow 3: Web UI Culling
 
 ```
 User navigates to web UI
-         │
+
          ├─ Load Sessions Dashboard
          │  └─ GET /api/sessions
          │     └─ Display all sessions with stats
          │
-         ├─ [User clicks "Wedding Reception"]
-         │  └─ GET /api/sessions/{id}/images?limit=50
+         ├─ [User clicks session]
+         │  └─ GET /api/sessions/{id}
+         │     └─ Display overview + filters
          │
          ├─ [Cull Interface Loads]
+         │  ├─ GET /api/sessions/{id}/images?limit=50
          │  ├─ Display main image
          │  ├─ Load filmstrip (25% visible)
          │  ├─ Show sharpness bar
-         │  └─ Show detected subjects
+         │  ├─ Show taxonomy breadcrumb (Mammal > Dog > Labrador)
+         │  └─ Show confidence scores per level
          │
          ├─ [User navigates / culls]
          │  │
          │  ├─ → Arrow Right
-         │  │  └─ Current image = next undecided image
-         │  │     └─ Load main image
-         │  │     └─ Load metadata
+         │  │  └─ Load next undecided image
          │  │
          │  ├─ K (Keep)
          │  │  └─ PATCH /api/images/{id}/cull
          │  │     { decision: "keep", rating: 5 }
-         │  │     └─ Mark in DB
-         │  │     └─ Show visual feedback
          │  │
          │  ├─ X (Reject)
          │  │  └─ PATCH /api/images/{id}/cull
@@ -182,60 +196,60 @@ User navigates to web UI
          │  │  └─ Revert last decision from DB
          │  │
          │  └─ [1-5] Star Rating
-         │     └─ Update rating without changing keep/reject
+         │     └─ Update rating without changing decision
          │
          ├─ [Filter & Browse]
          │  ├─ Sharpness >= 70 ✓
-         │  ├─ Subjects: [person ✓] [flowers ✓]
+         │  ├─ Taxonomy: [Mammal ✓] [Dog ✓]
          │  └─ GET /api/sessions/{id}/images?filter=...
          │
          └─ [Export]
             ├─ GET /api/export/{session_id}?format=jpeg
             │  └─ Download ZIP of culled images
             ├─ GET /api/export/{session_id}?format=csv
-            │  └─ Download metadata CSV
+            │  └─ Download metadata CSV with taxonomy
             └─ GET /api/export/{session_id}?format=pdf
-               └─ Download contact sheet PDF
+               └─ Download contact sheet
 ```
 
 ---
 
-## Database Schema (PostgreSQL)
+## Database Schema (SQLite or PostgreSQL)
 
 ### Tables
 
 #### `sessions`
 ```sql
 CREATE TABLE sessions (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   name VARCHAR(255),
   photographer_id VARCHAR(255),
   description TEXT,
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW(),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   status VARCHAR(50),  -- "ingesting", "analyzing", "complete"
   total_images INT,
   images_analyzed INT,
-  metadata JSONB  -- custom fields
+  metadata JSON  -- custom fields
 );
 ```
 
 #### `images`
 ```sql
 CREATE TABLE images (
-  id UUID PRIMARY KEY,
-  session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
   original_filename VARCHAR(255),
   storage_path VARCHAR(512) UNIQUE,
   mime_type VARCHAR(50),
   file_size_bytes BIGINT,
-  created_at TIMESTAMP DEFAULT NOW(),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   ingested_at TIMESTAMP,
   
   -- Analysis results
   sharpness_score INT,  -- 0-100
   sharpness_passing BOOLEAN,
-  subjects JSONB,  -- [{"label": "person", "confidence": 0.98}, ...]
+  taxonomy_data JSON,  -- [{"level": "Mammal", "label": "Mammal", "confidence": 0.99}, ...]
   analysis_completed_at TIMESTAMP,
   
   -- Curation decisions
@@ -262,11 +276,11 @@ CREATE TABLE images (
 #### `analysis_jobs`
 ```sql
 CREATE TABLE analysis_jobs (
-  id UUID PRIMARY KEY,
-  image_id UUID REFERENCES images(id) ON DELETE CASCADE,
-  job_type VARCHAR(50),  -- "sharpness", "subject_detect", "thumbnail"
+  id TEXT PRIMARY KEY,
+  image_id TEXT REFERENCES images(id) ON DELETE CASCADE,
+  job_type VARCHAR(50),  -- "sharpness", "taxonomy", "thumbnail", "embed"
   status VARCHAR(50),  -- "pending", "running", "complete", "failed"
-  result JSONB,
+  result JSON,
   error_message TEXT,
   started_at TIMESTAMP,
   completed_at TIMESTAMP,
@@ -277,66 +291,50 @@ CREATE TABLE analysis_jobs (
 );
 ```
 
-#### `export_jobs`
+#### `taxonomies`
 ```sql
-CREATE TABLE export_jobs (
-  id UUID PRIMARY KEY,
-  session_id UUID REFERENCES sessions(id),
-  format VARCHAR(50),  -- "jpeg", "csv", "pdf"
-  status VARCHAR(50),  -- "queued", "running", "complete", "failed"
-  file_url VARCHAR(512),
-  created_at TIMESTAMP,
-  completed_at TIMESTAMP,
+CREATE TABLE taxonomies (
+  id TEXT PRIMARY KEY,
+  name VARCHAR(255),
+  description TEXT,
+  config JSON,  -- hierarchical levels, classification model, calibration
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   
-  INDEX (session_id),
-  INDEX (status)
+  INDEX (name)
 );
 ```
 
 ---
 
-## API Endpoints (FastAPI)
-
-### Ingest API
-
-```
-POST /api/ingest/upload
-├─ Request: multipart/form-data
-│  ├─ image: File
-│  ├─ session_id: str
-│  └─ metadata: JSON (EXIF, etc.)
-│
-├─ Response: 200 OK
-│  ├─ imageId: UUID
-│  ├─ status: "stored"
-│  └─ analysisQueued: bool
-│
-└─ Error: 400, 413, 500
-```
-
-```
-GET /api/ingest/status/{session_id}
-├─ Response: 200 OK
-│  ├─ totalImages: 247
-│  ├─ uploadedImages: 156
-│  ├─ analyzedImages: 142
-│  ├─ speedMbps: 2.3
-│  ├─ estimatedMinutesRemaining: 20
-│  └─ sessionId: "..."
-│
-└─ Useful for polling from Ingest app during upload
-```
+## API Endpoints (Go REST API)
 
 ### Sessions API
+
+```
+POST /api/sessions
+├─ Request: JSON
+│  ├─ name: str
+│  ├─ description: str
+│  └─ taxonomy_id: str (optional, default: standard)
+│
+├─ Response: 200 OK
+│  ├─ id: UUID
+│  ├─ name: str
+│  ├─ created_at: timestamp
+│  └─ status: "creating"
+│
+└─ Error: 400, 500
+```
 
 ```
 GET /api/sessions
 ├─ Query: ?limit=50&offset=0
 ├─ Response: 200 OK
 │  └─ sessions: [
-│     { id, name, total_images, culled_count, status, ... }
+│     { id, name, total_images, culled_count, status, created_at, ... }
 │  ]
-└─ Auth: API token (bearer)
+└─ Auth: Bearer token
 ```
 
 ```
@@ -345,11 +343,30 @@ GET /api/sessions/{session_id}
 │  ├─ id: UUID
 │  ├─ name: str
 │  ├─ totalImages: int
+│  ├─ imagesAnalyzed: int
 │  ├─ statsSharpness: { passing: 220, failing: 27 }
-│  ├─ statsSubjects: [{ label: "person", count: 215 }, ...]
+│  ├─ statsTaxonomy: [
+│  │   { level: "Mammal", top_categories: [{ label: "Mammal", count: 215 }, ...] }
+│  │ ]
 │  ├─ statsCulling: { kept: 125, rejected: 122, pending: 0 }
 │  └─ createdAt: timestamp
-└─ Auth: API token
+└─ Auth: Bearer token
+```
+
+### Upload API
+
+```
+POST /api/sessions/{session_id}/upload
+├─ Request: multipart/form-data
+│  ├─ files: File[]
+│  └─ metadata: JSON (EXIF, timestamps, etc.)
+│
+├─ Response: 200 OK
+│  └─ uploaded: [
+│     { imageId: UUID, status: "stored", analysisQueued: bool }
+│  ]
+│
+└─ Error: 400, 413, 500
 ```
 
 ### Images API
@@ -360,7 +377,7 @@ GET /api/sessions/{session_id}/images
 │  ├─ limit=50
 │  ├─ offset=0
 │  ├─ filter.sharpness_min=70
-│  ├─ filter.subjects=person,flowers
+│  ├─ filter.taxonomy_path=Mammal.Dog
 │  ├─ filter.curation_status=pending
 │  └─ sort_by=created_at
 │
@@ -368,13 +385,13 @@ GET /api/sessions/{session_id}/images
 │  └─ images: [
 │     {
 │       id, originalFilename, storagePath,
-│       sharpnessScore, subjects,
+│       sharpnessScore, taxonomy: [{ level, label, confidence }, ...],
 │       exif: { camera, iso, shutter, aperture },
 │       curation: { decision, rating, decidedAt },
 │       thumbnails: { small: url, medium: url }
 │     }
 │  ]
-└─ Auth: API token
+└─ Auth: Bearer token
 ```
 
 ```
@@ -387,7 +404,7 @@ PATCH /api/images/{image_id}/cull
 ├─ Response: 200 OK
 │  └─ image: { ... updated fields ... }
 │
-└─ Auth: API token (or session cookie)
+└─ Auth: Bearer token or session cookie
 ```
 
 ### Export API
@@ -414,62 +431,43 @@ GET /api/export/{session_id}
 
 The Laplacian operator detects edges. A sharp image has high-frequency content (lots of edges). A blurry image is smooth (low-frequency).
 
-```python
-def compute_sharpness_score(image_path: str, camera_model: str = None) -> int:
-    """
-    Compute sharpness score 0-100 using Laplacian variance.
-    
-    Args:
-        image_path: Path to image file
-        camera_model: Optional for camera-specific calibration
-    
-    Returns:
-        Sharpness score 0-100
-    """
-    # Load image
-    image = cv2.imread(image_path)
-    if image is None:
+```go
+func ComputeSharpnessScore(imagePath string, cameraModel string) int {
+    // Load image
+    img, err := imaging.Open(imagePath)
+    if err != nil {
         return 0
+    }
     
-    # Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    // Convert to grayscale
+    gray := imaging.Grayscale(img)
     
-    # Apply Laplacian filter
-    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+    // Apply Laplacian filter
+    laplacian := applyLaplacian(gray)
     
-    # Compute variance
-    variance = laplacian.var()
+    // Compute variance
+    variance := computeVariance(laplacian)
     
-    # Calibration: camera-specific thresholds
-    # (collected from training set)
-    calibration = CAMERA_CALIBRATIONS.get(camera_model, {
-        "min": 100.0,    # Minimum variance observed
-        "max": 10000.0   # Maximum variance observed
-    })
+    // Calibration: camera-specific thresholds
+    calibration := getCameraCalibration(cameraModel)
     
-    # Normalize to 0-100
-    normalized = max(0, min(100, 
-        ((variance - calibration["min"]) / 
-         (calibration["max"] - calibration["min"])) * 100
+    // Normalize to 0-100
+    normalized := math.Max(0, math.Min(100,
+        ((variance - calibration.Min) / 
+         (calibration.Max - calibration.Min)) * 100,
     ))
     
     return int(normalized)
+}
 
-
-# Example calibration per camera model
-CAMERA_CALIBRATIONS = {
-    "Canon EOS R5": {
-        "min": 150.0,
-        "max": 12000.0
-    },
-    "Nikon Z9": {
-        "min": 120.0,
-        "max": 9500.0
-    },
-    "Sony A7RV": {
-        "min": 140.0,
-        "max": 11000.0
-    }
+// Example calibration per camera model
+var CameraCalibrations = map[string]struct{
+    Min float64
+    Max float64
+}{
+    "Canon EOS R5": {Min: 150.0, Max: 12000.0},
+    "Nikon Z9": {Min: 120.0, Max: 9500.0},
+    "Sony A7RV": {Min: 140.0, Max: 11000.0},
 }
 ```
 
@@ -490,74 +488,125 @@ CAMERA_CALIBRATIONS = {
 
 ---
 
-## Subject Detection (YOLO v8)
+## Subject Categorization (Hierarchical Taxonomy)
 
-### Model Selection
+### Flexible Taxonomy System
 
-- **Model**: YOLOv8-m (medium) or YOLOv8-s (small)
-- **Input**: 640×640 images
-- **Output**: Bounding boxes + confidence scores
-- **Execution**: ~1 second per image (GPU), ~5 seconds (CPU)
-- **Memory**: ~500MB GPU VRAM
-
-### Detection Classes (v1)
+PhotoCurator v2 uses a **configurable hierarchical taxonomy** instead of fixed object detection.
 
 ```
-Classes (15 core)
-├─ person
-├─ people_group
-├─ hand_single
-├─ hand_multiple
-├─ food
-├─ cake_dessert
-├─ drink_beverage
-├─ rings_jewelry
-├─ flowers_bouquet
-├─ decorations_venue
-├─ landscape_outdoor
-├─ architecture_indoor
-├─ backlighting_artistic
-├─ motion_blur_effect
-└─ other
+Taxonomy Structure Example:
+
+Living Things
+├─ Mammal
+│  ├─ Dog
+│  │  ├─ Labrador
+│  │  ├─ GoldenRetriever
+│  │  └─ GermanShepherd
+│  ├─ Cat
+│  └─ Human
+├─ Bird
+└─ Fish
+
+Inanimate
+├─ Building
+├─ Vehicle
+│  ├─ Car
+│  ├─ Truck
+│  └─ Motorcycle
+└─ Landscape
+   ├─ Mountain
+   ├─ Forest
+   └─ Beach
 ```
 
-### YOLO Integration
+### Taxonomy Configuration (JSON)
 
-```python
-from ultralytics import YOLO
-
-def detect_subjects(image_path: str) -> list[dict]:
-    """
-    Detect subjects in image using YOLOv8.
-    
-    Returns:
-        [{"label": "person", "confidence": 0.98, "count": 2}, ...]
-    """
-    model = YOLO("yolov8m.pt")  # Preloaded
-    
-    results = model(image_path, conf=0.5)
-    
-    detections = {}
-    for result in results:
-        for box in result.boxes:
-            class_name = result.names[int(box.cls)]
-            conf = float(box.conf)
-            
-            if class_name not in detections:
-                detections[class_name] = {"confidence": conf, "count": 1}
-            else:
-                detections[class_name]["count"] += 1
-                detections[class_name]["confidence"] = max(
-                    detections[class_name]["confidence"], conf
-                )
-    
-    # Return sorted by confidence
-    return [
-        {"label": k, "confidence": v["confidence"], "count": v["count"]}
-        for k, v in sorted(detections.items(), 
-                          key=lambda x: x[1]["confidence"], 
-                          reverse=True)
+```json
+{
+  "id": "default-2026",
+  "name": "Default Taxonomy",
+  "root": {
+    "label": "Things",
+    "levels": ["Category", "Subcategory", "Specific"],
+    "children": [
+      {
+        "label": "Living Things",
+        "children": [
+          {
+            "label": "Mammal",
+            "children": [
+              {
+                "label": "Dog",
+                "children": [
+                  { "label": "Labrador" },
+                  { "label": "GoldenRetriever" }
+                ]
+              }
+            ]
+          }
+        ]
+      }
     ]
+  },
+  "classifier": {
+    "type": "hierarchical",
+    "model": "resnet50-imagenet-hierarchy",
+    "confidence_threshold": 0.70
+  }
+}
+```
+
+### Classification Output
+
+```json
+{
+  "image_id": "uuid...",
+  "taxonomy_path": "Living Things > Mammal > Dog > Labrador",
+  "hierarchy": [
+    { "level": 0, "label": "Living Things", "confidence": 0.99 },
+    { "level": 1, "label": "Mammal", "confidence": 0.98 },
+    { "level": 2, "label": "Dog", "confidence": 0.97 },
+    { "level": 3, "label": "Labrador", "confidence": 0.96 }
+  ],
+  "alternatives": [
+    { "path": "...", "confidence": 0.12 },
+    { "path": "...", "confidence": 0.08 }
+  ]
+}
+```
+
+### Integration with UI
+
+The Next.js frontend displays:
+1. **Taxonomy breadcrumb**: Living Things > Mammal > Dog > Labrador
+2. **Confidence per level**: Shows individual confidence scores
+3. **Filtering**: Filter by any taxonomy level (e.g., "all Dogs")
+4. **Drill-down**: Click to expand/collapse hierarchy
+
+---
+
+## Deployment Architecture
+
+### Development (Single Machine)
+
+```
+┌─ Go Server (localhost:8080)
+├─ SQLite DB (data/curator.db)
+├─ File storage (data/images/, data/thumbnails/)
+├─ Next.js dev server (localhost:3000)
+└─ macOS CLI (binary)
+```
+
+### Production (Containerized)
+
+```
+Docker Compose:
+├─ curator-server (Go)
+├─ curator-db (PostgreSQL)
+├─ curator-web (Next.js)
+├─ nginx (reverse proxy)
+└─ volumes for data persistence
 ```
 
 ---
@@ -566,60 +615,27 @@ def detect_subjects(image_path: str) -> list[dict]:
 
 | Operation | Target | Notes |
 |-----------|--------|-------|
-| **Ingest Upload** | 2–3 MB/s | Gigabit network, parallel 4-8 |
-| **Sharpness Scoring** | <2 sec/img | CPU-based, single-threaded |
-| **Subject Detection** | <1 sec/img (GPU), <5 sec/img (CPU) | YOLOv8-m |
-| **Thumbnail Gen** | <0.5 sec/img | Parallel, 8-16 workers |
-| **Web UI Page Load** | <1 sec | Lazy-load images + filmstrip |
-| **Cull Action** | <100 ms | PATCH API response + DB write |
-| **Filter Query** | <500 ms | PostgreSQL on 100k+ images |
+| Sharpness analysis | <100ms | Per image, async |
+| Taxonomy classification | <200ms | Per image, async |
+| Upload batch (8 files) | <5s | Network + storage |
+| Web UI page load | <2s | Dashboard, filters |
+| Culling speed | 5-10 images/min | Keyboard-driven |
 
 ---
 
-## Security Considerations
+## Technology Stack Summary
 
-### Authentication
-- API token via header: `Authorization: Bearer {token}`
-- Session cookies for web UI (secure, httpOnly)
-- Token rotation every 30 days
-
-### Authorization
-- Ingest app authenticated as photographer (one photographer per session)
-- Web UI checks session ownership before serving images
-
-### Data Protection
-- HTTPS only (cert from Let's Encrypt)
-- Encrypt at-rest (AES-256) for sensitive metadata
-- No unencrypted transmission of image paths or metadata
-
-### Input Validation
-- Validate file types (MIME check + magic bytes)
-- Limit upload size (max 500MB per image)
-- Sanitize filenames
-- Validate JSON payloads against schema
+| Layer | Component | Technology |
+|-------|-----------|-----------|
+| **Frontend** | Web UI | Next.js + TypeScript + Tailwind CSS |
+| **API** | REST Server | Go (Gin or Echo framework) |
+| **Database** | SQLite (dev) / PostgreSQL (prod) | SQL |
+| **Storage** | File system | Local disk or S3 |
+| **Image Processing** | Sharpness, thumbnails | Go imaging libraries (go-image, imaging) |
+| **Taxonomy Classification** | Hierarchical categorization | TensorFlow Lite or ONNX Runtime (Go bindings) |
+| **Ingest** | CLI tool | Go (standalone binary for macOS) |
+| **Deployment** | Docker | Docker Compose |
 
 ---
 
-## Monitoring & Observability
-
-### Logging
-- Structured logging (JSON) to centralized log store
-- Levels: DEBUG, INFO, WARN, ERROR
-- Metrics: request latency, queue depth, error rates
-
-### Metrics
-- Ingest throughput (MB/s, images/sec)
-- Analysis completion rate
-- Database query latency
-- API endpoint response times
-
-### Alerting
-- Queue depth >1000 → page on-call
-- Sharpness scoring error rate >5% → alert
-- Database connection pool exhausted → alert
-- API error rate >1% → alert
-
----
-
-*For additional details, see IMPLEMENTATION.md, API.md, and DEPLOYMENT.md*
-
+*Architecture documentation for PhotoCurator v2 (2026). For API details, see API.md.*

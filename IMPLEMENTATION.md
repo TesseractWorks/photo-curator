@@ -1,186 +1,251 @@
-# PhotoCurator - Implementation Guide
+# PhotoCurator v2 - Implementation Guide
 
-This document provides the technical implementation roadmap and architecture details for PhotoCurator.
+This document provides the technical implementation roadmap and architecture details for PhotoCurator v2.
 
 ## Project Structure
 
 ```
 photo-curator/
 ├── README.md                          # Project overview and quick start
-├── PRD.md                             # Full product requirements (this dir)
+├── PRD.md                             # Full product requirements
 ├── ARCHITECTURE.md                    # Technical architecture deep dive
-├── DEVELOPMENT.md                     # Development setup and contribution guide
 │
-├── ingest-app/                        # macOS app (Swift/SwiftUI)
-│   ├── Package.swift
-│   ├── Package.resolved
-│   ├── Sources/
-│   │   └── PhotoCuratorIngest/
-│   │       ├── App.swift              # Main app entry
-│   │       ├── ContentView.swift      # Main UI
-│   │       ├── Networking/
-│   │       │   ├── CuratorServerClient.swift
-│   │       │   └── UploadManager.swift
-│   │       ├── Models/
-│   │       │   ├── Image.swift
-│   │       │   ├── Session.swift
-│   │       │   └── UploadProgress.swift
-│   │       ├── Services/
-│   │       │   ├── ImageScanner.swift
-│   │       │   ├── StagingManager.swift
-│   │       │   └── MetadataExtractor.swift
-│   │       └── Views/
-│   │           ├── DirectorySelector.swift
-│   │           ├── ProgressView.swift
-│   │           └── CompletionView.swift
-│   ├── Tests/
-│   ├── .gitignore
-│   └── build.sh                       # Build and codesign script
-│
-├── server/                            # Python/FastAPI backend
-│   ├── requirements.txt
-│   ├── setup.py
-│   ├── docker-compose.yml             # PostgreSQL, Redis, Nginx
-│   ├── Dockerfile                     # Server container
-│   ├── .env.example                   # Environment config template
+├── ingest-cli/                        # macOS CLI (Go)
+│   ├── main.go
+│   ├── go.mod
+│   ├── go.sum
+│   ├── Makefile
 │   │
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py                    # FastAPI app entry
-│   │   ├── config.py                  # Configuration
-│   │   ├── database.py                # PostgreSQL setup
+│   ├── cmd/
+│   │   └── photo-curator/
+│   │       └── main.go                # CLI entry point
+│   │
+│   ├── internal/
+│   │   ├── cli/
+│   │   │   ├── commands.go            # Command definitions
+│   │   │   ├── ingest.go              # Ingest command
+│   │   │   └── flags.go               # Flag parsing
 │   │   │
-│   │   ├── api/
-│   │   │   ├── __init__.py
-│   │   │   ├── ingest.py              # POST /api/ingest routes
-│   │   │   ├── images.py              # GET /api/images routes
-│   │   │   ├── sessions.py            # GET /api/sessions routes
-│   │   │   └── export.py              # GET /api/export routes
+│   │   ├── client/
+│   │   │   ├── curator.go             # HTTP client to server
+│   │   │   └── session.go             # Session management
 │   │   │
-│   │   ├── models/
-│   │   │   ├── __init__.py
-│   │   │   ├── image.py               # SQLAlchemy Image model
-│   │   │   ├── session.py             # SQLAlchemy Session model
-│   │   │   └── analysis.py            # SQLAlchemy Analysis model
+│   │   ├── fs/
+│   │   │   ├── scanner.go             # Directory scanner
+│   │   │   ├── formats.go             # Image format detection
+│   │   │   └── metadata.go            # EXIF extraction
 │   │   │
-│   │   ├── services/
-│   │   │   ├── __init__.py
-│   │   │   ├── image_storage.py       # Store/retrieve images
-│   │   │   ├── sharpness_scorer.py    # Laplacian-based scoring
-│   │   │   ├── subject_detector.py    # YOLO v8 inference
-│   │   │   ├── metadata_extractor.py  # EXIF extraction
-│   │   │   ├── thumbnail_generator.py # Resize images
-│   │   │   └── analysis_queue.py      # Task queueing
+│   │   ├── upload/
+│   │   │   ├── manager.go             # Upload orchestration
+│   │   │   ├── batch.go               # Batch processing
+│   │   │   ├── progress.go            # Progress tracking
+│   │   │   └── retry.go               # Retry logic
 │   │   │
-│   │   ├── jobs/
-│   │   │   ├── __init__.py
-│   │   │   ├── analyze_image.py       # Celery task
-│   │   │   ├── generate_thumbnails.py
-│   │   │   └── export_session.py
-│   │   │
-│   │   └── utils/
-│   │       ├── __init__.py
-│   │       ├── logging.py
-│   │       ├── constants.py
-│   │       └── validators.py
+│   │   └── ui/
+│   │       ├── progress.go            # Progress bar rendering
+│   │       ├── colors.go              # Terminal colors
+│   │       └── formatting.go          # Text formatting
 │   │
 │   ├── tests/
-│   │   ├── __init__.py
-│   │   ├── conftest.py
-│   │   ├── test_ingest_api.py
-│   │   ├── test_sharpness_scorer.py
-│   │   ├── test_subject_detector.py
-│   │   └── test_export.py
+│   │   ├── cli_test.go
+│   │   ├── scanner_test.go
+│   │   └── upload_test.go
 │   │
-│   ├── migrations/                    # Alembic database migrations
-│   │   ├── alembic.ini
-│   │   └── versions/
-│   │
-│   └── scripts/
-│       ├── init_db.py                 # Database initialization
-│       ├── download_models.py         # Download YOLO weights
-│       └── benchmarks.py              # Performance testing
+│   └── build.sh                       # Build and sign script
 │
-├── web-ui/                            # React frontend
-│   ├── package.json
-│   ├── vite.config.ts                 # Vite bundler config
-│   ├── index.html
-│   ├── tsconfig.json
-│   ├── tailwind.config.js
-│   ├── .env.example
+├── server/                            # Go backend (Gin)
+│   ├── main.go
+│   ├── go.mod
+│   ├── go.sum
+│   ├── Dockerfile
+│   ├── docker-compose.yml             # PostgreSQL, volumes
+│   ├── .env.example                   # Environment config template
 │   │
-│   ├── src/
-│   │   ├── main.tsx
-│   │   ├── App.tsx                    # Router setup
+│   ├── cmd/
+│   │   └── server/
+│   │       └── main.go                # Server entry
+│   │
+│   ├── internal/
+│   │   ├── config/
+│   │   │   └── config.go              # Configuration loading
 │   │   │
-│   │   ├── pages/
-│   │   │   ├── SessionsList.tsx       # Dashboard
-│   │   │   ├── CullInterface.tsx      # Main culling page
-│   │   │   ├── BrowseView.tsx         # Grid/filter view
-│   │   │   ├── IngestProgress.tsx     # Real-time ingest status
-│   │   │   └── ExportDialog.tsx       # Export options
+│   │   ├── db/
+│   │   │   ├── db.go                  # Database initialization
+│   │   │   ├── migration.go           # Schema setup
+│   │   │   └── queries.go             # SQL helpers
 │   │   │
-│   │   ├── components/
-│   │   │   ├── ImageViewer.tsx        # Main image display
-│   │   │   ├── Filmstrip.tsx          # Timeline navigation
-│   │   │   ├── SubjectBadge.tsx       # Subject label display
-│   │   │   ├── SharpnessBar.tsx       # Sharpness visualization
-│   │   │   ├── ControlPanel.tsx       # Keep/Reject buttons
-│   │   │   └── KeyboardShortcuts.tsx  # Help overlay
-│   │   │
-│   │   ├── hooks/
-│   │   │   ├── useSession.ts          # Session data fetching
-│   │   │   ├── useImages.ts           # Image list + filtering
-│   │   │   ├── useCulling.ts          # Cull decision state
-│   │   │   ├── useKeyboard.ts         # Keyboard event binding
-│   │   │   └── useWebSocket.ts        # Real-time progress
+│   │   ├── models/
+│   │   │   ├── session.go             # Session model
+│   │   │   ├── image.go               # Image model
+│   │   │   ├── analysis.go            # Analysis job model
+│   │   │   └── taxonomy.go            # Taxonomy model
 │   │   │
 │   │   ├── api/
-│   │   │   ├── client.ts              # API client (axios/fetch)
-│   │   │   ├── sessions.ts            # Session endpoints
-│   │   │   ├── images.ts              # Image endpoints
-│   │   │   └── export.ts              # Export endpoints
+│   │   │   ├── router.go              # Route setup
+│   │   │   ├── middleware.go          # Auth, logging, CORS
+│   │   │   │
+│   │   │   ├── handlers/
+│   │   │   │   ├── sessions.go        # Session endpoints
+│   │   │   │   ├── upload.go          # Upload endpoints
+│   │   │   │   ├── images.go          # Image endpoints
+│   │   │   │   └── export.go          # Export endpoints
+│   │   │   │
+│   │   │   └── responses.go           # Response helpers
 │   │   │
-│   │   ├── types/
-│   │   │   ├── api.ts                 # API response types
-│   │   │   ├── models.ts              # Domain models
-│   │   │   └── ui.ts                  # UI state types
+│   │   ├── services/
+│   │   │   ├── session_service.go     # Session business logic
+│   │   │   ├── storage_service.go     # Store/retrieve images
+│   │   │   ├── upload_service.go      # Receive uploads
+│   │   │   ├── analysis_service.go    # Queue/manage analysis
+│   │   │   └── export_service.go      # Export job management
 │   │   │
-│   │   ├── store/
-│   │   │   ├── sessionSlice.ts        # Redux/Pinia session state
-│   │   │   ├── cullingSlice.ts        # Culling decisions state
-│   │   │   └── index.ts               # Store setup
+│   │   ├── processor/
+│   │   │   ├── processor.go           # Processing orchestrator
+│   │   │   ├── sharpness.go           # Laplacian scoring
+│   │   │   ├── taxonomy.go            # Hierarchical classification
+│   │   │   ├── thumbnail.go           # Image resizing
+│   │   │   └── metadata.go            # EXIF embedding
 │   │   │
-│   │   ├── styles/
-│   │   │   ├── index.css              # Global styles
-│   │   │   └── tailwind.css           # Tailwind imports
+│   │   ├── jobs/
+│   │   │   ├── queue.go               # Job queue (channel-based)
+│   │   │   ├── worker.go              # Worker pool
+│   │   │   └── scheduler.go           # Task scheduling
+│   │   │
+│   │   ├── storage/
+│   │   │   ├── filesystem.go          # Local FS backend
+│   │   │   └── s3.go                  # (Optional) S3 backend
 │   │   │
 │   │   └── utils/
-│   │       ├── formatters.ts
-│   │       ├── keyboard.ts            # Keyboard mapping
-│   │       └── validators.ts
+│   │       ├── logger.go              # Logging
+│   │       ├── errors.go              # Error handling
+│   │       └── constants.go           # Constants
+│   │
+│   ├── tests/
+│   │   ├── handlers_test.go
+│   │   ├── services_test.go
+│   │   ├── processor_test.go
+│   │   └── db_test.go
+│   │
+│   └── scripts/
+│       ├── init_db.sql                # Database initialization
+│       └── seed_taxonomies.go         # Load default taxonomies
+│
+├── web-ui/                            # Next.js frontend
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── next.config.js                 # Next.js config
+│   ├── tsconfig.json
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   ├── .env.example
 │   │
 │   ├── public/
-│   │   └── icons/
+│   │   ├── icons/
+│   │   └── logos/
 │   │
-│   └── tests/
-│       ├── unit/
-│       ├── integration/
-│       └── e2e/
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── layout.tsx              # Root layout
+│   │   │   ├── page.tsx                # Home/redirect
+│   │   │   ├─── sessions/
+│   │   │   │    └── page.tsx           # Sessions dashboard
+│   │   │   └─── session/
+│   │   │        ├── [id]/
+│   │   │        │  ├── page.tsx        # Session details
+│   │   │        │  └── cull/
+│   │   │        │     └── page.tsx     # Culling interface
+│   │   │        └── layout.tsx
+│   │   │
+│   │   ├── components/
+│   │   │   ├── layout/
+│   │   │   │   ├── Header.tsx
+│   │   │   │   ├── Sidebar.tsx
+│   │   │   │   └── Footer.tsx
+│   │   │   │
+│   │   │   ├── sessions/
+│   │   │   │   ├── SessionsList.tsx
+│   │   │   │   ├── SessionCard.tsx
+│   │   │   │   └── SessionStats.tsx
+│   │   │   │
+│   │   │   ├── culling/
+│   │   │   │   ├── ImageViewer.tsx     # Main display
+│   │   │   │   ├── Filmstrip.tsx       # Thumbnail bar
+│   │   │   │   ├── ControlPanel.tsx    # Keep/Reject buttons
+│   │   │   │   ├── TaxonomyDisplay.tsx # Category breadcrumb
+│   │   │   │   ├── SharpnessBar.tsx    # Score visualization
+│   │   │   │   ├── MetadataPanel.tsx   # EXIF details
+│   │   │   │   └── KeyboardHelp.tsx    # Hotkey overlay
+│   │   │   │
+│   │   │   ├── common/
+│   │   │   │   ├── Button.tsx
+│   │   │   │   ├── Modal.tsx
+│   │   │   │   ├── Spinner.tsx
+│   │   │   │   ├── Toast.tsx
+│   │   │   │   └── Badge.tsx
+│   │   │   │
+│   │   │   └── forms/
+│   │   │       ├── SessionForm.tsx
+│   │   │       └── ExportForm.tsx
+│   │   │
+│   │   ├── hooks/
+│   │   │   ├── useSession.ts
+│   │   │   ├── useImages.ts
+│   │   │   ├── useCulling.ts
+│   │   │   ├── useKeyboard.ts
+│   │   │   ├── useApi.ts
+│   │   │   └── useLocalStorage.ts
+│   │   │
+│   │   ├── lib/
+│   │   │   ├── api.ts                  # API client (fetch-based)
+│   │   │   ├── api/
+│   │   │   │   ├── sessions.ts
+│   │   │   │   ├── images.ts
+│   │   │   │   └── export.ts
+│   │   │   ├── utils.ts
+│   │   │   └── constants.ts
+│   │   │
+│   │   ├── types/
+│   │   │   ├── api.ts                  # API response types
+│   │   │   ├── models.ts               # Domain models
+│   │   │   └── ui.ts                   # UI state
+│   │   │
+│   │   ├── store/
+│   │   │   ├── store.ts                # Zustand store
+│   │   │   ├── sessionSlice.ts
+│   │   │   └── cullingSlice.ts
+│   │   │
+│   │   ├── styles/
+│   │   │   ├── globals.css
+│   │   │   └── tailwind.css
+│   │   │
+│   │   └── utils/
+│   │       ├── formatters.ts           # Date, size formatting
+│   │       ├── keyboard.ts             # Keyboard events
+│   │       └── validators.ts
+│   │
+│   ├── tests/
+│   │   ├── __tests__/
+│   │   │   ├── components/
+│   │   │   ├── hooks/
+│   │   │   └── lib/
+│   │   │
+│   │   └── setup.ts
+│   │
+│   └── .eslintrc.js
 │
 ├── docs/                              # Additional documentation
-│   ├── DEPLOYMENT.md                  # Deployment guide (Docker, K8s)
-│   ├── API.md                         # API reference
+│   ├── API.md                         # Full API reference
+│   ├── DEPLOYMENT.md                  # Docker, production setup
 │   ├── SHARPNESS_CALIBRATION.md       # Camera-specific tuning
-│   ├── YOLO_INTEGRATION.md            # Subject detection setup
-│   ├── DB_SCHEMA.md                   # Database schema
+│   ├── TAXONOMY_CONFIG.md             # Taxonomy customization
+│   ├── DB_SCHEMA.md                   # Database schema details
 │   └── TROUBLESHOOTING.md
 │
 ├── .github/
 │   ├── workflows/
-│   │   ├── test-server.yml            # Server CI/CD
-│   │   ├── test-web-ui.yml            # Web UI CI/CD
-│   │   ├── build-ingest.yml           # macOS app CI/CD
+│   │   ├── test-server.yml            # Go server CI/CD
+│   │   ├── test-web-ui.yml            # Next.js CI/CD
+│   │   ├── build-cli.yml              # macOS CLI build
 │   │   └── deploy.yml                 # Production deployment
 │   │
 │   └── ISSUE_TEMPLATE/
@@ -188,8 +253,11 @@ photo-curator/
 │
 ├── .gitignore
 ├── LICENSE
-└── CHANGELOG.md
+├── CHANGELOG.md
+└── CONTRIBUTING.md
 ```
+
+---
 
 ## Key Implementation Decisions
 
@@ -197,59 +265,197 @@ photo-curator/
 
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
-| **Ingest App** | Swift + SwiftUI | Native macOS integration, best file/image handling, fast performance |
-| **Server** | FastAPI + Python | Rapid development, excellent ML ecosystem, async/concurrency built-in |
-| **Web UI** | React + TypeScript | Type safety, component reusability, strong community |
-| **Database** | PostgreSQL | ACID transactions, good JSON support for metadata, scalability |
-| **Image Processing** | OpenCV + PIL | Well-established, no cloud dependencies, fast |
-| **ML Models** | YOLO v8 (ONNX) | Embedded execution, no external API calls, <1s per image |
-| **Task Queue** | Celery + Redis | Distributed processing, retries, priority queues |
-| **Containerization** | Docker + Compose | Reproducible deployment, multi-service orchestration |
+| **Ingest CLI** | Go (standalone binary) | Single executable, cross-platform, minimal dependencies, fast startup |
+| **Server API** | Go (Gin/Echo framework) | Lightweight, fast, native HTTP/2, excellent concurrency, easy deployment |
+| **Web UI** | Next.js + TypeScript | Modern React, SSR capable, strong ecosystem, type safety |
+| **Database** | SQLite (dev) / PostgreSQL (prod) | ACID transactions, JSON support for metadata, scalability |
+| **Image Processing** | Go imaging libraries | No external dependencies, fast, embedded in server |
+| **Taxonomy Classification** | TensorFlow Lite or ONNX Runtime | Pre-trained hierarchical models, lightweight, no cloud API |
+| **Task Queue** | Go goroutines + channels | Built-in concurrency, no external dependencies in dev, simple scaling |
+| **Deployment** | Docker Compose | Reproducible, local development, production-ready |
 
 ### 2. Processing Architecture
 
-**Synchronous for Ingest:**
-- Upload endpoint blocks until image is stored
-- Ensures user gets immediate confirmation
-- Keeps ingest app responsive
+**Synchronous for Upload:**
+- Upload endpoint stores image immediately
+- Returns HTTP 200 to CLI (quick feedback)
+- Enqueues analysis tasks
 
 **Asynchronous for Analysis:**
-- Queue analysis tasks in Celery
-- Ingest app polls `GET /api/status/{session_id}` for progress
-- Allows batching and prioritization
+- Analysis tasks run in goroutine pool
+- CLI polls `/api/sessions/{id}` for progress
+- Server broadcasts updates via progress endpoint
 
 ### 3. Storage Strategy
 
 **Images:**
 - Store in organized filesystem: `data/images/{session_id}/{timestamp}-{filename}`
-- Symlink originals to avoid duplication
-- Generate thumbnails in separate tree
+- Generate thumbnails in separate tree: `data/thumbnails/`
+- Use hard links or copies (configurable)
 
 **Metadata:**
-- `.json` sidecar for each image (sharpness, subjects, EXIF)
+- `.json` sidecar for each image (analysis results)
 - PostgreSQL for queryable metadata + curation decisions
-- Redis cache for session state during culling
+- In-memory cache for active session state
 
 ### 4. Frontend Architecture
 
 **State Management:**
-- Redux for global state (sessions, images, analysis results)
-- Local React state for UI interactions (selected image, keyboard focus)
-- WebSocket for real-time progress updates
+- Zustand for global state (sessions, images, analysis results)
+- React local state for UI interactions
+- localStorage for user preferences
 
 **Keyboard-First Design:**
-- All major actions accessible via keyboard
-- Full filmstrip navigation
-- Customizable hotkeys
+- All major actions accessible via keyboard shortcuts
+- Configurable hotkey bindings
+- Vim-style navigation (hjkl) optional
 
-## Next Steps
+### 5. CLI Philosophy
 
-1. Create GitHub repository: `github.com/TesseractWorks/photo-curator`
-2. Set up monorepo structure with subproject CI/CD
-3. Begin Phase 1 development (see PRD roadmap)
-4. Establish coding standards and PR review process
+The ingest CLI prioritizes:
+- **Simplicity**: Single command, minimal flags
+- **Progress visibility**: Real-time feedback without verbose output
+- **Robustness**: Automatic retries, graceful error handling
+- **Offline awareness**: Can detect network issues and queue for retry
 
 ---
 
-*For questions or corrections, file an issue in the GitHub repo.*
+## Development Setup
 
+### Prerequisites
+
+- Go 1.21+
+- Node.js 18+ (Next.js)
+- PostgreSQL 14+ (or SQLite for dev)
+- macOS 11+ (for CLI distribution)
+
+### Server Setup
+
+```bash
+# Clone
+git clone https://github.com/TesseractWorks/photo-curator.git
+cd photo-curator/server
+
+# Setup database
+go run ./scripts/init_db.go
+
+# Run
+go run ./cmd/server/main.go
+```
+
+### Web UI Setup
+
+```bash
+cd photo-curator/web-ui
+
+# Install dependencies
+npm install
+
+# Development server
+npm run dev
+
+# Production build
+npm run build
+npm run start
+```
+
+### CLI Setup
+
+```bash
+cd photo-curator/ingest-cli
+
+# Build
+go build -o photo-curator ./cmd/photo-curator/main.go
+
+# Test
+./photo-curator ingest --help
+```
+
+---
+
+## Deployment
+
+### Docker Compose (Development & Production)
+
+```bash
+cd photo-curator/server
+
+# Create .env from example
+cp .env.example .env
+
+# Start services
+docker-compose up -d
+
+# Run migrations
+docker-compose exec curator-server go run ./scripts/init_db.go
+```
+
+### Environment Variables
+
+```env
+# Server
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8080
+DATABASE_URL=postgresql://user:pass@localhost/curator
+
+# Storage
+STORAGE_PATH=./data/images
+THUMBNAIL_PATH=./data/thumbnails
+
+# Security
+JWT_SECRET=your-secret-here
+API_TOKEN=your-api-token
+
+# Processing
+MAX_WORKERS=4
+BATCH_SIZE=8
+
+# Taxonomy
+DEFAULT_TAXONOMY_ID=default-2026
+```
+
+---
+
+## Performance Targets
+
+| Operation | Target | Notes |
+|-----------|--------|-------|
+| Sharpness analysis | <100ms | Per image |
+| Taxonomy classification | <200ms | Per image |
+| Upload batch (8 files) | <5s | Network + storage |
+| Web UI page load | <2s | Dashboard with 100+ sessions |
+| Culling speed | 5-10 images/min | Keyboard-driven |
+| Export (100 images) | <10s | ZIP creation + compression |
+
+---
+
+## Testing Strategy
+
+### Server Tests
+- Unit: Services, processors, models
+- Integration: API endpoints with mock DB
+- E2E: Full workflow (upload → analysis → cull → export)
+
+### Web UI Tests
+- Component: React component rendering
+- Hook: Custom React hooks
+- E2E: Playwright for full workflows
+
+### CLI Tests
+- Unit: Scanner, metadata extraction
+- Integration: Mock server responses
+- Manual: Real server integration
+
+---
+
+## Next Steps
+
+1. ✅ Architecture & Implementation planning
+2. → Phase 1: Server + CLI (ingest, analysis, basic API)
+3. → Phase 2: Web UI (dashboard, culling interface)
+4. → Phase 3: Export, taxonomy customization, multi-user support
+5. → Phase 4: Performance optimization, cloud deployment
+
+---
+
+*Implementation guide for PhotoCurator v2. See ARCHITECTURE.md for detailed system design.*
